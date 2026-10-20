@@ -1,0 +1,609 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Student {
+  id               String                @id @default(uuid())
+  telegram_user_id BigInt                @unique
+  username         String?
+  first_name       String?
+  last_name        String?
+  is_active        Boolean               @default(true)
+  created_at       DateTime              @default(now())
+  updated_at       DateTime              @updatedAt
+  subscriptions    Subscription[]
+  payments         Payment[]
+  payment_intents  PaymentIntent[]
+  refunds          Refund[]
+  renewals         SubscriptionRenewal[]
+  progress         ContentProgress[]
+  media_access     MediaAccessLog[]
+  notifications    Notification[]
+  sales_orders     SalesOrder[]
+  retention_schedules RetentionSchedule[]
+  playback_sessions PlaybackSession[]
+
+  @@map("students")
+}
+
+enum AdminRole {
+  SUPER_ADMIN
+  ADMIN
+}
+
+model AdminUser {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  password_hash String
+  role          AdminRole
+  created_at    DateTime   @default(now())
+  updated_at    DateTime   @updatedAt
+  audit_logs    AuditLog[]
+
+  @@map("admin_users")
+}
+
+model Plan {
+  id              String          @id @default(uuid())
+  name            String
+  price           Int             @default(500) // Price in Telegram Stars (XTR)
+  currency        String          @default("XTR")
+  interval        String          @default("monthly")
+  created_at      DateTime        @default(now())
+  updated_at      DateTime        @updatedAt
+  subscriptions   Subscription[]
+  payment_intents PaymentIntent[]
+  course_bundles  CourseBundle[]
+
+  @@map("plans")
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  PAST_DUE
+  GRACE_PERIOD
+  CANCELLED
+  EXPIRED
+  REFUNDED
+}
+
+model Subscription {
+  id                   String                @id @default(uuid())
+  student_id           String
+  plan_id              String
+  status               SubscriptionStatus    @default(PENDING)
+  price                Int?                  @default(500)
+  auto_renew           Boolean               @default(false)
+  next_renewal_at      DateTime?
+  started_at           DateTime?
+  current_period_start DateTime?
+  current_period_end   DateTime?
+  cancelled_at         DateTime?
+  expired_at           DateTime?
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+
+  student  Student               @relation(fields: [student_id], references: [id])
+  plan     Plan                  @relation(fields: [plan_id], references: [id])
+  payments Payment[]
+  renewals SubscriptionRenewal[]
+
+  @@map("subscriptions")
+}
+
+model PaymentIntent {
+  id               String    @id @default(uuid())
+  telegram_user_id BigInt
+  student_id       String?
+  plan_id          String
+  currency         String    @default("XTR")
+  amount           Int       @default(100)
+  status           String    @default("CREATED") // CREATED, PENDING, PAID, FAILED, REFUNDED, EXPIRED
+  payload          String    @unique
+  invoice_link     String?
+  is_renewal       Boolean   @default(false)
+  expires_at       DateTime
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  student Student? @relation(fields: [student_id], references: [id])
+  plan    Plan     @relation(fields: [plan_id], references: [id])
+  payment Payment?
+
+  @@map("payment_intents")
+}
+
+model Payment {
+  id                         String                @id @default(uuid())
+  student_id                 String
+  subscription_id            String?
+  payment_intent_id          String?               @unique
+  provider                   String                @default("TelegramStars")
+  provider_order_id          String?
+  provider_payment_id        String?
+  telegram_payment_charge_id String?               @unique
+  payment_method             String?               @default("Stars")
+  amount                     Int                   @default(500)
+  currency                   String                @default("XTR")
+  status                     String
+  paid_at                    DateTime?
+  created_at                 DateTime              @default(now())
+  updated_at                 DateTime              @updatedAt
+  student                    Student               @relation(fields: [student_id], references: [id])
+  subscription               Subscription?         @relation(fields: [subscription_id], references: [id])
+  payment_intent             PaymentIntent?        @relation(fields: [payment_intent_id], references: [id])
+  events                     PaymentEvent[]
+  refund                     Refund?
+  renewals                   SubscriptionRenewal[]
+
+  @@map("payments")
+}
+
+model PaymentEvent {
+  id                  String    @id @default(uuid())
+  provider_event_id   String    @unique
+  payment_id          String?
+  provider            String    @default("TelegramStars")
+  event_type          String
+  raw_data            Json
+  verification_status String    @default("VERIFIED")
+  verified_at         DateTime?
+  created_at          DateTime  @default(now())
+  payment             Payment?  @relation(fields: [payment_id], references: [id])
+
+  @@map("payment_events")
+}
+
+model Refund {
+  id                 String    @id @default(uuid())
+  payment_id         String    @unique
+  student_id         String?
+  amount             Int
+  percentage         Float     @default(95.0)
+  reason             String?
+  status             String    @default("COMPLETED")
+  provider_refund_id String?
+  requested_at       DateTime  @default(now())
+  processed_at       DateTime?
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @updatedAt
+  payment            Payment   @relation(fields: [payment_id], references: [id])
+  student            Student?  @relation(fields: [student_id], references: [id])
+
+  @@map("refunds")
+}
+
+model SubscriptionRenewal {
+  id              String        @id @default(uuid())
+  subscription_id String
+  payment_id      String?
+  student_id      String?
+  attempted_at    DateTime      @default(now())
+  amount          Int           @default(500)
+  status          String        @default("SUCCESS") // SUCCESS, FAILED, UPCOMING, MISSED, MANUAL
+  previous_end_at DateTime?
+  new_end_at      DateTime?
+  created_at      DateTime      @default(now())
+  subscription    Subscription  @relation(fields: [subscription_id], references: [id])
+  payment         Payment?      @relation(fields: [payment_id], references: [id])
+  student         Student?      @relation(fields: [student_id], references: [id])
+
+  @@map("subscription_renewals")
+}
+
+model AccountAuditLog {
+  id             String    @id @default(uuid())
+  admin_user_id  String?
+  admin_email    String?
+  action         String
+  entity         String
+  entity_id      String
+  previous_value Json?
+  new_value      Json?
+  reason         String?
+  created_at     DateTime  @default(now())
+
+  @@map("account_audit_logs")
+}
+
+enum MediaType {
+  VIDEO
+  AUDIO
+  TEXT
+}
+
+enum ContentVisibility {
+  VISIBLE
+  HIDDEN
+}
+
+enum AccessLevel {
+  SUBSCRIBER
+  FREE_PREVIEW
+}
+
+enum ContentStatus {
+  DRAFT
+  PUBLISHED
+  UNPUBLISHED
+  ARCHIVED
+}
+
+model Content {
+  id              String            @id @default(uuid())
+  title           String
+  media_type      MediaType
+  media_id        String? // Optional because text might not have external media
+  duration        Int? // In seconds
+  category_id     String
+  sort_order      Int               @default(0)
+  published_at    DateTime?
+  visibility      ContentVisibility @default(HIDDEN)
+  access_level    AccessLevel       @default(SUBSCRIBER)
+  is_free_preview Boolean           @default(false)
+  status          ContentStatus     @default(DRAFT)
+  created_by   String // Admin user ID
+  created_at   DateTime          @default(now())
+  updated_at   DateTime          @updatedAt
+
+  category     Category          @relation(fields: [category_id], references: [id])
+  tags         ContentTag[]
+  text_content TextContent?
+  progress     ContentProgress[]
+  media_access MediaAccessLog[]
+  media        Media?            @relation(fields: [media_id], references: [id])
+  bundle_items CourseBundleItem[]
+  playback_sessions PlaybackSession[]
+
+  @@map("content")
+}
+
+model Category {
+  id         String    @id @default(uuid())
+  name       String    @unique
+  created_at DateTime  @default(now())
+  updated_at DateTime  @updatedAt
+  content    Content[]
+
+  @@map("categories")
+}
+
+model Tag {
+  id         String       @id @default(uuid())
+  name       String       @unique
+  created_at DateTime     @default(now())
+  updated_at DateTime     @updatedAt
+  content    ContentTag[]
+
+  @@map("tags")
+}
+
+model ContentTag {
+  content_id String
+  tag_id     String
+  content    Content @relation(fields: [content_id], references: [id])
+  tag        Tag     @relation(fields: [tag_id], references: [id])
+
+  @@id([content_id, tag_id])
+  @@map("content_tags")
+}
+
+model Media {
+  id                String            @id @default(uuid())
+  storage_path      String
+  hls_path          String?
+  status            String
+  is_encrypted      Boolean           @default(false)
+  encryption_key_id String?
+  transcode_status  String            @default("READY")
+  created_at        DateTime          @default(now())
+  updated_at        DateTime          @updatedAt
+  content           Content[]
+  playback_sessions PlaybackSession[]
+  encryption_keys   EncryptionKey[]
+
+  @@map("media")
+}
+
+model TextContent {
+  id         String   @id @default(uuid())
+  content_id String   @unique
+  body       String
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  content    Content  @relation(fields: [content_id], references: [id])
+
+  @@map("text_content")
+}
+
+model ContentProgress {
+  student_id    String
+  content_id    String
+  last_position Int? // In seconds, for video/audio
+  completed     Boolean   @default(false)
+  opened        Boolean   @default(false) // For text
+  last_accessed DateTime  @default(now())
+  student       Student   @relation(fields: [student_id], references: [id])
+  content       Content   @relation(fields: [content_id], references: [id])
+
+  @@id([student_id, content_id])
+  @@map("content_progress")
+}
+
+model MediaAccessLog {
+  id         String   @id @default(uuid())
+  student_id String
+  content_id String
+  issued_at  DateTime @default(now())
+  ip         String?
+  user_agent String?
+  student    Student  @relation(fields: [student_id], references: [id])
+  content    Content  @relation(fields: [content_id], references: [id])
+
+  @@map("media_access_log")
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  student_id String
+  type       String
+  message    String
+  read       Boolean  @default(false)
+  created_at DateTime @default(now())
+  student    Student  @relation(fields: [student_id], references: [id])
+
+  @@map("notifications")
+}
+
+model AuditLog {
+  id            String     @id @default(uuid())
+  admin_user_id String?
+  action        String
+  resource      String
+  resource_id   String?
+  metadata      Json?
+  created_at    DateTime   @default(now())
+  admin_user    AdminUser? @relation(fields: [admin_user_id], references: [id])
+
+  @@map("audit_logs")
+}
+
+model SalesCampaign {
+  id           String          @id @default(uuid())
+  code         String          @unique
+  name         String
+  description  String?
+  group_chat_id String?
+  bundle_id    String?
+  is_active    Boolean         @default(true)
+  created_at   DateTime        @default(now())
+  updated_at   DateTime        @updatedAt
+
+  bundle        CourseBundle?      @relation(fields: [bundle_id], references: [id])
+  sessions      SalesSession[]
+  orders        SalesOrder[]
+  funnel_events SalesFunnelEvent[]
+
+  @@map("sales_campaigns")
+}
+
+model CourseBundle {
+  id            String             @id @default(uuid())
+  slug          String             @unique
+  name          String
+  description   String
+  benefits      Json               // string[]
+  outcomes      Json               // string[]
+  price_stars   Int                @default(500)
+  currency      String             @default("XTR")
+  duration_days Int                @default(30)
+  plan_id       String?
+  is_active     Boolean            @default(true)
+  created_at    DateTime           @default(now())
+  updated_at    DateTime           @updatedAt
+
+  plan          Plan?              @relation(fields: [plan_id], references: [id])
+  campaigns     SalesCampaign[]
+  sessions      SalesSession[]
+  orders        SalesOrder[]
+  bundle_items  CourseBundleItem[]
+
+  @@map("course_bundles")
+}
+
+model CourseBundleItem {
+  id         String       @id @default(uuid())
+  bundle_id  String
+  content_id String
+  created_at DateTime     @default(now())
+
+  bundle     CourseBundle @relation(fields: [bundle_id], references: [id], onDelete: Cascade)
+  content    Content      @relation(fields: [content_id], references: [id], onDelete: Cascade)
+
+  @@unique([bundle_id, content_id])
+  @@map("course_bundle_items")
+}
+
+model SalesSession {
+  id               String             @id @default(uuid())
+  telegram_user_id BigInt
+  chat_id          String
+  campaign_id      String?
+  bundle_id        String?
+  language         String             @default("en")
+  customer_type    String?            // NEW_CUSTOMER, EXISTING_CUSTOMER
+  current_state    String             @default("START")
+  state_metadata   Json?
+  last_active_at   DateTime           @default(now())
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+
+  campaign         SalesCampaign?     @relation(fields: [campaign_id], references: [id])
+  bundle           CourseBundle?      @relation(fields: [bundle_id], references: [id])
+  orders           SalesOrder[]
+  funnel_events    SalesFunnelEvent[]
+
+  @@index([telegram_user_id])
+  @@map("sales_sessions")
+}
+
+model SalesOrder {
+  id                         String           @id @default(uuid())
+  order_number               String           @unique
+  telegram_user_id           BigInt
+  student_id                 String?
+  bundle_id                  String
+  campaign_id                String?
+  session_id                 String?
+  amount_stars               Int
+  currency                   String           @default("XTR")
+  status                     String           @default("PENDING") // PENDING, PAID, PROVISIONED, ACTIVATED, FAILED, REFUNDED, CANCELLED
+  invoice_payload            String           @unique
+  telegram_payment_charge_id String?          @unique
+  provider_payment_charge_id String?
+  idempotency_key            String           @unique
+  paid_at                    DateTime?
+  created_at                 DateTime         @default(now())
+  updated_at                 DateTime         @updatedAt
+
+  bundle                     CourseBundle     @relation(fields: [bundle_id], references: [id])
+  campaign                   SalesCampaign?   @relation(fields: [campaign_id], references: [id])
+  session                    SalesSession?    @relation(fields: [session_id], references: [id])
+  student                    Student?         @relation(fields: [student_id], references: [id])
+  provisioning_job           ProvisioningJob?
+
+  @@index([telegram_user_id])
+  @@map("sales_orders")
+}
+
+enum ProvisioningStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  RETRY_REQUIRED
+  FAILED
+}
+
+model ProvisioningJob {
+  id               String             @id @default(uuid())
+  order_id         String             @unique
+  student_id       String?
+  status           ProvisioningStatus @default(PENDING)
+  activation_token String             @unique
+  activation_link  String
+  expires_at       DateTime
+  activated_at     DateTime?
+  attempts         Int                @default(0)
+  max_attempts     Int                @default(3)
+  last_error       String?
+  created_at       DateTime           @default(now())
+  updated_at       DateTime           @updatedAt
+
+  order            SalesOrder         @relation(fields: [order_id], references: [id], onDelete: Cascade)
+
+  @@map("provisioning_jobs")
+}
+
+model SalesFunnelEvent {
+  id               String         @id @default(uuid())
+  session_id       String?
+  campaign_id      String?
+  telegram_user_id BigInt?
+  event_type       String         // LEAD_TRIGGERED, LANGUAGE_SELECTED, CUSTOMER_TYPE_SELECTED, BUNDLE_VIEWED, FAQ_VIEWED, CHECKOUT_INITIATED, PAYMENT_SUCCESS, PROVISIONING_COMPLETED, ACTIVATION_COMPLETED, RENEWAL_CONVERTED, REFUND_REQUESTED
+  metadata         Json?
+  created_at       DateTime       @default(now())
+
+  session          SalesSession?  @relation(fields: [session_id], references: [id])
+  campaign         SalesCampaign? @relation(fields: [campaign_id], references: [id])
+
+  @@index([event_type])
+  @@index([created_at])
+  @@map("sales_funnel_events")
+}
+
+model RetentionSchedule {
+  id               String    @id @default(uuid())
+  student_id       String?
+  telegram_user_id BigInt
+  event_type       String    // ONBOARDING_WELCOME, COURSE_START_REMINDER, INACTIVITY_REENGAGE, EXPIRY_REMINDER_7D, EXPIRY_REMINDER_3D, EXPIRY_REMINDER_1D, RENEWAL_OFFER, ACCESS_REVOCATION
+  scheduled_at     DateTime
+  sent_at          DateTime?
+  status           String    @default("SCHEDULED") // SCHEDULED, SENT, CANCELLED, FAILED
+  metadata         Json?
+  created_at       DateTime  @default(now())
+  updated_at       DateTime  @updatedAt
+
+  student          Student?  @relation(fields: [student_id], references: [id])
+
+  @@index([scheduled_at, status])
+  @@map("retention_schedules")
+}
+
+enum PlaybackSessionStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+model PlaybackSession {
+  id             String                @id @default(uuid())
+  student_id     String
+  content_id     String
+  media_id       String
+  token_hash     String                @unique
+  status         PlaybackSessionStatus @default(ACTIVE)
+  watermark_text String
+  ip_address     String?
+  user_agent     String?
+  created_at     DateTime              @default(now())
+  expires_at     DateTime
+  last_active_at DateTime              @default(now())
+  revoked_at     DateTime?
+  revoke_reason  String?
+
+  student Student @relation(fields: [student_id], references: [id], onDelete: Cascade)
+  content Content @relation(fields: [content_id], references: [id], onDelete: Cascade)
+  media   Media   @relation(fields: [media_id], references: [id], onDelete: Cascade)
+
+  @@index([student_id, status])
+  @@index([expires_at])
+  @@map("playback_sessions")
+}
+
+model EncryptionKey {
+  id         String    @id @default(uuid())
+  media_id   String
+  key_id     String    @unique
+  key_cipher String
+  iv_hex     String?
+  is_active  Boolean   @default(true)
+  created_at DateTime  @default(now())
+  rotated_at DateTime?
+
+  media Media @relation(fields: [media_id], references: [id], onDelete: Cascade)
+
+  @@index([media_id, is_active])
+  @@map("encryption_keys")
+}
+
+model SecurityAuditEvent {
+  id         String   @id @default(uuid())
+  event_type String
+  student_id String?
+  session_id String?
+  content_id String?
+  ip_address String?
+  user_agent String?
+  details    Json?
+  created_at DateTime @default(now())
+
+  @@index([event_type, created_at])
+  @@index([student_id])
+  @@map("security_audit_events")
+}
